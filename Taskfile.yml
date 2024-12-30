@@ -1,0 +1,39 @@
+version: '3'
+
+tasks:
+  clean:
+    dir: static
+    cmds:
+      - rm -rf *
+
+  fetch:ocaml:
+    dir: cli
+    cmds:
+      - opam install . --deps-only --with-test --yes
+
+  fetch:pnpm:
+    dir: cli
+    cmds:
+      - pnpm install --frozen-lockfile
+
+  compile:cljs:
+    deps:
+      - fetch:ocaml
+      - fetch:pnpm
+    cmds:
+      - pnpm install --frozen-lockfile
+      - pnpm gulp build
+      - pnpm cljs:release-electron
+      - pnpm db-worker-node:bundle
+      - opam exec -- pnpm cli:release
+      - pnpm webpack-app-build
+      - pnpm desktop:prepare-runtime-js
+
+  build:
+    dir: static
+    deps:
+      - compile:cljs
+    cmds:
+      - pnpm install
+      - pnpm electron:make
+

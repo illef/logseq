@@ -2,7 +2,7 @@
 Type=Application
 Name=Logseq-DB
 Comment=Privacy-first, open-source platform for knowledge sharing and management
-Exec=/home/illef/Projects/logseq/static/out/Logseq-linux-x64/Logseq %u
+Exec=/home/illef/Projects/logseq/static/dist/linux-unpacked/logseq %u
 Icon=logseq
 Terminal=false
 StartupNotify=true
