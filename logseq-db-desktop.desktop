@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Logseq-DB
+Comment=Privacy-first, open-source platform for knowledge sharing and management
+Exec=/home/illef/Projects/logseq/static/out/Logseq-linux-x64/Logseq %u
+Icon=logseq
+Terminal=false
+StartupNotify=true
+Categories=Office;
+MimeType=x-scheme-handler/logseq;
+StartupWMClass=Logseq
