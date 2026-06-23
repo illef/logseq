@@ -55,9 +55,10 @@ let cli_entrypoint_path () =
   let argv = Cli_platform.argv () in
   if Array.length argv > 1 then Some argv.(1) else None
 
-let parent_executable_path () =
+let runtime_executable () =
   let argv = Cli_platform.argv () in
-  if Array.length argv > 0 then argv.(0) else "node"
+  if Array.length argv > 0 && String.trim argv.(0) <> "" then argv.(0)
+  else "node"
 
 let cli_dir_db_worker_script_paths () =
   match cli_entrypoint_path () with
@@ -302,7 +303,7 @@ let shell_quote value =
 
 let db_worker_command_line ~script ~root_dir ~repo ~owner_source
     ~create_empty_db =
-  let executable = parent_executable_path () in
+  let executable = runtime_executable () in
   Vec.push_front
     (db_worker_spawn_args ~executable ~script ~root_dir ~repo ~owner_source
        ~create_empty_db)
@@ -317,7 +318,7 @@ let spawn_server_process ~script ~root_dir ~repo ~owner_source ~create_empty_db
   Fun.protect
     ~finally:(fun () -> Cli_unix.close devnull)
     (fun () ->
-      let executable = parent_executable_path () in
+      let executable = runtime_executable () in
       let argv =
         db_worker_spawn_args ~executable ~script ~root_dir ~repo ~owner_source
           ~create_empty_db
