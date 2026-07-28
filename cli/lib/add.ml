@@ -956,32 +956,88 @@ let page_ref_value entity fallback_title =
       in
       Some (Edn_util.map_vec fields)
 
+let find_substring_from ~needle haystack start =
+  let needle_len = String.length needle in
+  let haystack_len = String.length haystack in
+  let rec loop index =
+    if index + needle_len > haystack_len then None
+    else if String.sub haystack index needle_len = needle then Some index
+    else loop (index + 1)
+  in
+  loop start
+
+let replace_all_substrings ~needle ~replacement haystack =
+  if needle = "" then haystack
+  else
+    let needle_len = String.length needle in
+    let buffer = Buffer.create (String.length haystack) in
+    let rec loop start =
+      match find_substring_from ~needle haystack start with
+      | None ->
+          Buffer.add_substring buffer haystack start
+            (String.length haystack - start)
+      | Some index ->
+          Buffer.add_substring buffer haystack start (index - start);
+          Buffer.add_string buffer replacement;
+          loop (index + needle_len)
+    in
+    loop 0;
+    Buffer.contents buffer
+
+(* Replaces every `[[page-name]]` occurrence with `[[uuid]]` for each
+   (page-name, uuid) pair, so the stored title carries a live reference
+   instead of a frozen copy of the page name. *)
+let replace_page_refs_with_uuids title page_name_to_uuid =
+  Vec.fold_left
+    (fun title (page_name, uuid) ->
+      replace_all_substrings ~needle:("[[" ^ page_name ^ "]]")
+        ~replacement:("[[" ^ uuid ^ "]]")
+        title)
+    title page_name_to_uuid
+
+(* Resolves each [[page-name]] in title to a page entity and returns both the
+   ref values (for :block/refs) and the title rewritten so every resolved
+   [[page-name]] becomes [[uuid]] -- mirroring what the editor does via
+   logseq.db.frontend.content/title-ref->id-ref, so the stored title stays a
+   live reference that survives later page renames instead of a frozen copy
+   of the page name. *)
 let resolve_title_page_refs invoke_config repo title =
   let open Cli_effect in
   let page_names = extract_page_refs title in
-  let rec loop acc remaining =
+  let rec loop refs_acc names_acc remaining =
     match Vec.pop_front remaining with
-    | None -> pure (Ok acc)
+    | None -> pure (Ok (refs_acc, names_acc))
     | Some (page_name, rest) ->
         bind (ensure_page_entity invoke_config repo page_name) (function
           | Error err -> pure (Error err)
           | Ok entity -> (
-              match page_ref_value entity page_name with
-              | Some ref_value -> loop (Vec.push_back acc ref_value) rest
-              | None -> pure (Error (page_not_found ()))))
+              match (page_ref_value entity page_name, uuid_of_entity entity) with
+              | Some ref_value, Some uuid ->
+                  loop
+                    (Vec.push_back refs_acc ref_value)
+                    (Vec.push_back names_acc (page_name, uuid))
+                    rest
+              | _ -> pure (Error (page_not_found ()))))
   in
-  loop Vec.empty page_names
+  bind (loop Vec.empty Vec.empty page_names) (function
+    | Error err -> pure (Error err)
+    | Ok (refs, names_acc) ->
+        let title = replace_page_refs_with_uuids title names_acc in
+        pure (Ok (title, refs)))
 
 let rec resolve_block_title_page_refs invoke_config repo block =
   let open Cli_effect in
   let title_refs =
     match block.Block.title with
-    | Some title -> resolve_title_page_refs invoke_config repo title
-    | None -> pure (Ok Vec.empty)
+    | Some title ->
+        bind (resolve_title_page_refs invoke_config repo title) (function
+          | Error err -> pure (Error err)
+          | Ok (title, refs) -> pure (Ok (Some title, refs)))
+    | None -> pure (Ok (None, Vec.empty))
   in
   bind title_refs (function
     | Error err -> pure (Error err)
-    | Ok refs ->
+    | Ok (title, refs) ->
         let rec resolve_children acc remaining =
           match Vec.pop_front remaining with
           | None -> pure (Ok acc)
@@ -998,7 +1054,7 @@ let rec resolve_block_title_page_refs invoke_config repo block =
               let own_refs =
                 match (block.Block.uuid, refs) with
                 | Some uuid, refs when not (Vec.is_empty refs) ->
-                    Vec.singleton (uuid, refs)
+                    Vec.singleton (uuid, (refs, title))
                 | _ -> Vec.empty
               in
               pure (Ok (Vec.append own_refs child_refs))))
@@ -1059,9 +1115,16 @@ let execute_add_block action config mode =
                               match block.Block.uuid with
                               | Some uuid -> (
                                   match Vec.assoc_opt uuid refs_by_uuid with
-                                  | Some refs ->
-                                      Edn_util.assoc "block/refs"
-                                        (Edn_util.vector_vec refs) value
+                                  | Some (refs, title) ->
+                                      let value =
+                                        Edn_util.assoc "block/refs"
+                                          (Edn_util.vector_vec refs) value
+                                      in
+                                      (match title with
+                                      | Some title ->
+                                          Edn_util.assoc "block/title"
+                                            (Edn_util.string title) value
+                                      | None -> value)
                                   | None -> value)
                               | None -> value
                             in

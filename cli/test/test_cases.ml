@@ -1500,6 +1500,8 @@ let () =
           expect_named_contains "block refs attr" body "block/refs";
           expect_named_contains "resolved page ref uuid" body ref_uuid;
           expect_named_contains "resolved page ref title" body "bar_page";
+          expect_named_contains "title rewritten to id ref" body
+            ("[[" ^ ref_uuid ^ "]]");
           if !step = 4 then Js.Promise.resolve pass
           else
             fail_promise
