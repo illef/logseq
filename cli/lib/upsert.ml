@@ -1783,6 +1783,41 @@ let rec resolve_property_value_refs invoke_config repo value =
           loop Vec.empty (Edn_util.vec_of_array fields)
       | _ -> pure (Ok value))
 
+(* A resolved --update-properties value is either sent as-is via
+   batch-set-property, or -- for :default-typed string values that contain
+   [[page-name]] refs -- turned into its own property-text-block so the
+   stored text carries live [[uuid]] references (same as block content) and
+   survives later page renames instead of freezing the page name. *)
+type resolved_property_value =
+  | Plain_value of Melange_edn_melange.any
+  | Text_block_value of string
+
+let property_type_of_ident invoke_config repo ident =
+  let open Cli_effect in
+  map
+    (fun entity ->
+      Option.map Edn_util.keyword_to_string
+        (Option.bind (Edn_util.get entity "logseq.property/type")
+           Edn_util.as_keyword_t))
+    (pull_entity_by_lookup invoke_config repo
+       (vector_vec (Vec.of_array [| kw "logseq.property/type" |]))
+       (vector_vec (Vec.of_array [| kw "db/ident"; Edn_util.any ident |])))
+
+let resolve_property_assignment_value invoke_config repo ident value =
+  let open Cli_effect in
+  bind (property_type_of_ident invoke_config repo ident) (fun property_type ->
+      match (property_type, Edn_util.as_string value) with
+      | Some "default", Some text
+        when not (Vec.is_empty (Add.extract_page_refs text)) ->
+          bind (Add.resolve_title_page_refs invoke_config repo text) (function
+            | Error err -> pure (Error err)
+            | Ok (rewritten_text, _refs) ->
+                pure (Ok (Text_block_value rewritten_text)))
+      | _ -> (
+          bind (resolve_property_value_refs invoke_config repo value) (function
+            | Error err -> pure (Error err)
+            | Ok value -> pure (Ok (Plain_value value)))))
+
 let resolve_property_assignments invoke_config repo assignments =
   let open Cli_effect in
   let rec loop acc remaining =
@@ -1794,10 +1829,11 @@ let resolve_property_assignments invoke_config repo assignments =
           | Error err -> pure (Error err)
           | Ok ident ->
               bind
-                (resolve_property_value_refs invoke_config repo assignment.value)
+                (resolve_property_assignment_value invoke_config repo ident
+                   assignment.value)
                 (function
                 | Error err -> pure (Error err)
-                | Ok value -> loop (Vec.push_back acc (ident, value)) rest))
+                | Ok resolved -> loop (Vec.push_back acc (ident, resolved)) rest))
   in
   loop Vec.empty assignments
 
@@ -1844,12 +1880,35 @@ let inline_property_assignments block =
       in
       loop Vec.empty fields
 
+(* Plain (ident * value) resolution used for properties inlined into
+   newly-created blocks, where the owning block doesn't exist yet at resolve
+   time so a property-text-block (see resolve_property_assignments below)
+   can't be created for it. *)
+let resolve_inline_property_assignments invoke_config repo assignments =
+  let open Cli_effect in
+  let rec loop acc remaining =
+    match Vec.pop_front remaining with
+    | None -> pure (Ok acc)
+    | Some (assignment, rest) ->
+        bind (resolve_property_ident invoke_config repo assignment.Property.key)
+          (function
+          | Error err -> pure (Error err)
+          | Ok ident ->
+              bind
+                (resolve_property_value_refs invoke_config repo assignment.value)
+                (function
+                | Error err -> pure (Error err)
+                | Ok value -> loop (Vec.push_back acc (ident, value)) rest))
+  in
+  loop Vec.empty assignments
+
 let rec resolve_block_inline_properties invoke_config repo block =
   let open Cli_effect in
   match inline_property_assignments block with
   | Error err -> pure (Error err)
   | Ok assignments ->
-      bind (resolve_property_assignments invoke_config repo assignments)
+      bind
+        (resolve_inline_property_assignments invoke_config repo assignments)
         (function
         | Error err -> pure (Error (option_resolution_error "--blocks" err))
         | Ok resolved_assignments ->
@@ -1992,21 +2051,41 @@ let append_tag_and_property_ops block_uuids ~update_tag_ids ~remove_tag_ids
       update_tag_ids
   in
   let update_property_ops =
-    Vec.map
-      (fun (ident, value) ->
-        Edn_util.vector_vec
-          (Vec.of_array
-             [|
-               kw "batch-set-property";
-               Edn_util.vector_vec
+    Vec.concat_map
+      (fun (ident, resolved) ->
+        match resolved with
+        | Plain_value value ->
+            Vec.singleton
+              (Edn_util.vector_vec
                  (Vec.of_array
                     [|
-                      uuid_values;
-                      Edn_util.any ident;
-                      value;
-                      Edn_util.map_vec Vec.empty;
-                    |]);
-             |]))
+                      kw "batch-set-property";
+                      Edn_util.vector_vec
+                        (Vec.of_array
+                           [|
+                             uuid_values;
+                             Edn_util.any ident;
+                             value;
+                             Edn_util.map_vec Vec.empty;
+                           |]);
+                    |]))
+        | Text_block_value text ->
+            Vec.map
+              (fun block_uuid ->
+                Edn_util.vector_vec
+                  (Vec.of_array
+                     [|
+                       kw "create-property-text-block";
+                       Edn_util.vector_vec
+                         (Vec.of_array
+                            [|
+                              Edn_util.uuid block_uuid;
+                              Edn_util.any ident;
+                              Edn_util.string text;
+                              Edn_util.map_vec Vec.empty;
+                            |]);
+                     |]))
+              block_uuids)
       update_properties
   in
   Vec.append remove_tag_ops
@@ -2589,6 +2668,9 @@ let execute_task_plan_on_uuids invoke_config repo block_uuids task_tag_id
            | Property.Key_ident ident -> Some (ident, assignment.value)
            | _ -> None)
          update_property_assignments)
+  in
+  let update_properties =
+    Vec.map (fun (ident, value) -> (ident, Plain_value value)) update_properties
   in
   let remove_properties =
     Vec.filter_map

@@ -1344,6 +1344,11 @@ let () =
                 "[[\"^ \
                  \",\"~:db/id\",77,\"~:db/ident\",\"~:user.property/node-prop\",\"~:logseq.property/type\",\"default\"]]"
             | 4
+              when Js.String.includes ~search:"thread-api/pull" body
+                   && Js.String.includes ~search:"node-prop" body ->
+                "[\"^ \
+                 \",\"~:db/ident\",\"~:user.property/node-prop\",\"~:logseq.property/type\",\"default\"]"
+            | 5
               when Js.String.includes ~search:"thread-api/apply-outliner-ops"
                      body ->
                 if not (Js.String.includes ~search:property_ident body) then
@@ -1372,10 +1377,10 @@ let () =
               |]
           in
           ignore (expect_cli_exit_zero "upsert page property by name" output);
-          if !step = 4 then Js.Promise.resolve pass
+          if !step = 5 then Js.Promise.resolve pass
           else
             fail_promise
-              (Printf.sprintf "expected four invoke requests, got %d" !step)));
+              (Printf.sprintf "expected five invoke requests, got %d" !step)));
 
   test_promise "upsert block create resolves inline property names per block"
     (fun () ->
@@ -1506,6 +1511,87 @@ let () =
           else
             fail_promise
               (Printf.sprintf "expected four invoke requests, got %d" !step)));
+
+  test_promise
+    "upsert page update-properties creates a property-text-block for \
+     default-type page refs"
+    (fun () ->
+      let step = ref 0 in
+      let ref_uuid = "33333333-3333-4333-8333-333333333333" in
+      let captured_apply_body = ref None in
+      let server =
+        invoke_server (fun body ->
+            incr step;
+            match !step with
+            | 1
+              when Js.String.includes ~search:"thread-api/pull" body
+                   && not (Js.String.includes ~search:"related-prop" body) ->
+                "[\"^ \
+                 \",\"~:db/id\",55,\"~:block/uuid\",\"22222222-2222-4222-8222-222222222222\",\"~:block/name\",\"relhome\"]"
+            | 2
+              when Js.String.includes ~search:"thread-api/pull" body
+                   && Js.String.includes ~search:"related-prop" body ->
+                "null"
+            | 3
+              when Js.String.includes ~search:"thread-api/q" body
+                   && Js.String.includes ~search:"related-prop" body ->
+                "[[\"^ \
+                 \",\"~:db/id\",77,\"~:db/ident\",\"~:user.property/related-prop\",\"~:logseq.property/type\",\"~:default\"]]"
+            | 4
+              when Js.String.includes ~search:"thread-api/pull" body
+                   && Js.String.includes ~search:"related-prop" body ->
+                "[\"^ \
+                 \",\"~:db/ident\",\"~:user.property/related-prop\",\"~:logseq.property/type\",\"~:default\"]"
+            | 5
+              when Js.String.includes ~search:"thread-api/q" body
+                   && Js.String.includes ~search:"bar_page" body ->
+                "[[\"^ \",\"~:db/id\",88,\"~:block/uuid\",\"" ^ ref_uuid
+                ^ "\",\"~:block/name\",\"bar_page\",\"~:block/title\",\"bar_page\"]]"
+            | 6
+              when Js.String.includes ~search:"thread-api/apply-outliner-ops"
+                     body ->
+                captured_apply_body := Some body;
+                "[]"
+            | _ ->
+                fail_test
+                  (Printf.sprintf "unexpected request at step %d: %s" !step body);
+                "")
+      in
+      with_server server (fun base_url ->
+          let* output =
+            run_cli_p
+              ~env:[| ("LOGSEQ_CLI_BASE_URL", base_url) |]
+              [|
+                "--graph";
+                "alpha";
+                "--output";
+                "json";
+                "upsert";
+                "page";
+                "--id";
+                "55";
+                "--update-properties";
+                "{:related-prop \"[[bar_page]]\"}";
+              |]
+          in
+          ignore
+            (expect_cli_exit_zero "upsert page update-properties text block"
+               output);
+          let body =
+            match !captured_apply_body with
+            | Some body -> body
+            | None ->
+                fail_test "missing captured apply body";
+                failwith "missing captured apply body"
+          in
+          expect_named_contains "op is create-property-text-block" body
+            "create-property-text-block";
+          expect_named_contains "title rewritten to id ref" body
+            ("[[" ^ ref_uuid ^ "]]");
+          if !step = 6 then Js.Promise.resolve pass
+          else
+            fail_promise
+              (Printf.sprintf "expected six invoke requests, got %d" !step)));
 
   test_promise "upsert block update resolves tag names from tag list" (fun () ->
       let step = ref 0 in
