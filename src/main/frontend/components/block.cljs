@@ -1928,15 +1928,34 @@
       :else
       (macro-else-cp name config arguments))))
 
+(def ^:private highlight-color-markers
+  {"g" "green"
+   "b" "blue"
+   "r" "red"})
+
+(defn- extract-highlight-color
+  "==g:text== / ==b:text== / ==r:text== convention: a single-letter color
+   marker right after the opening `==`, stripped before rendering. Falls
+   back to the default yellow mark when the first child isn't a `Plain`
+   node starting with one of the known markers, e.g. `==text==` unchanged."
+  [data]
+  (let [data (vec data)]
+    (if-let [[_ marker rest-text] (when (and (seq data) (= (ffirst data) "Plain"))
+                                     (re-matches #"(?s)([gbr]):(.*)" (second (first data))))]
+      [(get highlight-color-markers marker) (assoc data 0 ["Plain" rest-text])]
+      [nil data])))
+
 (defn- emphasis-cp
   [config kind data]
-  (let [elem (case kind
-               "Bold" :b
-               "Italic" :i
-               "Underline" :ins
-               "Strike_through" :del
-               "Highlight" :mark)]
-    (->elem elem (map-inline config data))))
+  (if (= kind "Highlight")
+    (let [[color data] (extract-highlight-color data)]
+      (->elem :mark (when color {:class color}) (map-inline config data)))
+    (let [elem (case kind
+                 "Bold" :b
+                 "Italic" :i
+                 "Underline" :ins
+                 "Strike_through" :del)]
+      (->elem elem (map-inline config data)))))
 
 (defn hiccup->html
   [s]

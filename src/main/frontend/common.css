@@ -578,6 +578,21 @@ mark {
   border-radius: 4px;
 }
 
+mark.green {
+  background: #c7e9c0;
+  color: #1a1a1a;
+}
+
+mark.blue {
+  background: #aecbfa;
+  color: #1a1a1a;
+}
+
+mark.red {
+  background: #f2b6b0;
+  color: #1a1a1a;
+}
+
 /* inline code */
 :not(pre) > code {
   border-radius: 3px;
