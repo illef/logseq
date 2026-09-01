@@ -1790,7 +1790,7 @@ let rec resolve_property_value_refs invoke_config repo value =
    survives later page renames instead of freezing the page name. *)
 type resolved_property_value =
   | Plain_value of Melange_edn_melange.any
-  | Text_block_value of string
+  | Text_block_value of string * Melange_edn_melange.any
 
 let property_type_of_ident invoke_config repo ident =
   let open Cli_effect in
@@ -1811,8 +1811,19 @@ let resolve_property_assignment_value invoke_config repo ident value =
         when not (Vec.is_empty (Add.extract_page_refs text)) ->
           bind (Add.resolve_title_page_refs invoke_config repo text) (function
             | Error err -> pure (Error err)
-            | Ok (rewritten_text, _refs) ->
-                pure (Ok (Text_block_value rewritten_text)))
+            | Ok (rewritten_text, refs) ->
+                let property_ref =
+                  Edn_util.map_vec
+                    (Vec.singleton (kw "db/ident", Edn_util.any ident))
+                in
+                let properties =
+                  Edn_util.map_vec
+                    (Vec.singleton
+                       ( kw "block/refs",
+                         Edn_util.vector_vec
+                           (Vec.push_front refs property_ref) ))
+                in
+                pure (Ok (Text_block_value (rewritten_text, properties))))
       | _ -> (
           bind (resolve_property_value_refs invoke_config repo value) (function
             | Error err -> pure (Error err)
@@ -2069,7 +2080,7 @@ let append_tag_and_property_ops block_uuids ~update_tag_ids ~remove_tag_ids
                              Edn_util.map_vec Vec.empty;
                            |]);
                     |]))
-        | Text_block_value text ->
+        | Text_block_value (text, properties) ->
             Vec.map
               (fun block_uuid ->
                 Edn_util.vector_vec
@@ -2082,7 +2093,9 @@ let append_tag_and_property_ops block_uuids ~update_tag_ids ~remove_tag_ids
                               Edn_util.uuid block_uuid;
                               Edn_util.any ident;
                               Edn_util.string text;
-                              Edn_util.map_vec Vec.empty;
+                              Edn_util.map_vec
+                                (Vec.singleton
+                                   (kw "properties", properties));
                             |]);
                      |]))
               block_uuids)

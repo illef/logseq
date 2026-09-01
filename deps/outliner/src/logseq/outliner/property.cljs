@@ -406,7 +406,7 @@
   "Creates a property value block for the given property and value.
 
   Adds it to `block-id` unless `:set-block-property?` is false."
-  [conn block-id property-id value {:keys [new-block-id set-block-property?]
+  [conn block-id property-id value {:keys [new-block-id set-block-property? properties]
                                     :or {set-block-property? true}}]
   (let [property (d/entity @conn property-id)
         block (when block-id (d/entity @conn block-id))
@@ -418,7 +418,8 @@
             (throw (ex-info "value should be a string" {:block-id block-id
                                                         :property-id property-id
                                                         :value value'})))
-        new-value-block (cond-> (db-property-build/build-property-value-block (or block property) property value')
+        new-value-block (cond-> (db-property-build/build-property-value-block
+                                 (or block property) property value' :properties properties)
                           new-block-id
                           (assoc :block/uuid new-block-id))]
     (ldb/batch-transact-with-temp-conn!

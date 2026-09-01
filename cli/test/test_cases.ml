@@ -1634,6 +1634,9 @@ let () =
             "create-property-text-block";
           expect_named_contains "title rewritten to id ref" body
             ("[[" ^ ref_uuid ^ "]]");
+          expect_named_contains "property text block refs" body "block/refs";
+          expect_named_contains "property text block attributes" body
+            "properties";
           if !step = 6 then Js.Promise.resolve pass
           else
             fail_promise
