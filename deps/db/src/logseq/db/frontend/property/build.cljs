@@ -80,6 +80,7 @@
                         ;; page block
                      block-id)
        :block/parent block-id
+       :block/refs [(or (:db/id property) {:db/ident (:db/ident property)})]
        :logseq.property/created-from-property (if (= (:db/ident property) :logseq.property/default-value)
                                                 block-id
                                                 (or (:db/id property) {:db/ident (:db/ident property)}))
