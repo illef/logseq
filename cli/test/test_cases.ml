@@ -1513,6 +1513,52 @@ let () =
               (Printf.sprintf "expected four invoke requests, got %d" !step)));
 
   test_promise
+    "upsert page uses the uuid returned when creating a journal"
+    (fun () ->
+      let step = ref 0 in
+      let journal_uuid = "00000001-2026-0828-0000-000000000000" in
+      let server =
+        invoke_server (fun body ->
+            incr step;
+            match !step with
+            | 1 when Js.String.includes ~search:"thread-api/q" body -> "[]"
+            | 2
+              when Js.String.includes ~search:"thread-api/apply-outliner-ops"
+                     body ->
+                "[\"^ \",\"~:result\",[\"Aug 28th, 2026\",\"" ^ journal_uuid
+                ^ "\"]]"
+            | 3
+              when Js.String.includes ~search:"thread-api/pull" body
+                   && Js.String.includes ~search:journal_uuid body ->
+                "[\"^ \",\"~:db/id\",42,\"~:block/uuid\",\"" ^ journal_uuid
+                ^ "\"]"
+            | _ ->
+                fail_test
+                  (Printf.sprintf "unexpected request at step %d: %s" !step body);
+                "")
+      in
+      with_server server (fun base_url ->
+          let* output =
+            run_cli_p
+              ~env:[| ("LOGSEQ_CLI_BASE_URL", base_url) |]
+              [|
+                "--graph";
+                "alpha";
+                "--output";
+                "json";
+                "upsert";
+                "page";
+                "--page";
+                "2026-08-28";
+              |]
+          in
+          ignore (expect_cli_exit_zero "upsert journal page" output);
+          if !step = 3 then Js.Promise.resolve pass
+          else
+            fail_promise
+              (Printf.sprintf "expected three invoke requests, got %d" !step)));
+
+  test_promise
     "upsert page update-properties creates a property-text-block for \
      default-type page refs"
     (fun () ->

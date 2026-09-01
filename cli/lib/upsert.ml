@@ -2157,6 +2157,9 @@ let restore_recycled_page invoke_config repo page_uuid =
              |])))
 
 let pull_created_page invoke_config repo name create_result =
+  let create_result =
+    Option.value (Edn_util.get create_result "result") ~default:create_result
+  in
   let uuid_value =
     match
       (Edn_util.as_vector create_result, Edn_util.as_list create_result)
